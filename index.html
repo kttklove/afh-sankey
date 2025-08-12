@@ -5,114 +5,222 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>The Business of Homelessness — Indiana (Prototype)</title>
 <style>
-  body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #eee; }
-  h1 { margin: 0; padding: 20px; }
-  .buttons { padding: 10px 20px; }
-  button {
-    margin-right: 10px; padding: 8px 12px;
-    background: #222; color: #fff; border: 1px solid #555; cursor: pointer;
-  }
-  button:hover { background: #444; }
-  #chart { width: 100%; height: 500px; }
-  #details, #debug { padding: 10px 20px; }
-  #debug { background: #222; color: #0f0; font-family: monospace; white-space: pre-wrap; }
+  :root{ --bg:#111; --fg:#eee; --muted:#9aa3b2; --green:#4CAF50; --yellow:#FFD700; --red:#FF4C4C; }
+  html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+  h1{margin:0;padding:20px}
+  .lead{color:var(--muted);padding:0 20px 10px}
+  .buttons{padding:10px 20px;display:flex;flex-wrap:wrap;gap:8px}
+  button{padding:8px 12px;background:#1b1b1b;color:#fff;border:1px solid #3a3a3a;border-radius:999px;cursor:pointer}
+  button[aria-pressed="true"]{outline:2px solid #76c7ff}
+  button:hover{background:#2a2a2a}
+  .row{display:grid;grid-template-columns:1fr;gap:16px;padding:0 20px 20px}
+  @media(min-width:900px){.row{grid-template-columns:2.2fr 1fr}}
+  .card{background:#161616;border:1px solid #2a2a2a;border-radius:16px;padding:12px}
+  #chart{width:100%;height:560px;min-height:360px}
+  #tooltip{position:fixed;pointer-events:none;background:#0f1218;border:1px solid #2a2f3a;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.35;max-width:320px;color:#e7edf5;z-index:3;opacity:0}
+  #debug{background:#222;color:#0f0;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;white-space:pre-wrap;padding:10px;border-radius:12px}
+  .legend{display:flex;gap:14px;align-items:center;margin-top:8px;color:#cbd5e1;font-size:13px}
+  .sw{width:14px;height:14px;border-radius:4px;display:inline-block;margin-right:6px;border:1px solid #111}
+  .note{font-size:12px;color:#9aa3b2}
 </style>
+<!-- Local libs with CDN fallback -->
 <script src="lib/d3.v7.min.js" onerror="this.onerror=null; this.src='https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js';"></script>
 <script src="lib/d3-sankey.min.js" onerror="this.onerror=null; this.src='https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js';"></script>
 </head>
 <body>
 <h1>The Business of Homelessness — Indiana (Prototype)</h1>
-<div class="buttons">
-  <button onclick="renderCurrent()">Current System</button>
-  <button onclick="renderHousingFirst()">Housing First</button>
-  <button onclick="renderHumanHarm()">Human Harm Overlay</button>
-  <button onclick="renderFaithLens()">Faith Lens</button>
-  <button onclick="runHealthCheck()">Run Health Check</button>
-  <button onclick="clearChart()">Reset Prototype</button>
+<p class="lead">Toggle between the current system and Housing First. Turn on the Faith Lens and Human Harm overlay to see more than dollars. Data below are <strong>placeholders</strong> until local figures are finalized.</p>
+
+<div class="buttons" role="group" aria-label="Dashboard controls">
+  <button id="btn-current" aria-pressed="true">Current System</button>
+  <button id="btn-hf" aria-pressed="false">Housing First</button>
+  <button id="btn-harm" aria-pressed="true">Human Harm Overlay</button>
+  <button id="btn-faith" aria-pressed="false">Faith Lens</button>
+  <button id="btn-health">Run Health Check</button>
+  <button id="btn-reset">Reset Prototype</button>
 </div>
-<svg id="chart"></svg>
-<div id="details">Hover over a node to see details.</div>
-<div id="debug">Debug Output:</div>
+
+<div class="row">
+  <div class="card">
+    <div id="chart" aria-label="Sankey diagram"></div>
+    <div class="legend">
+      <span><span class="sw" style="background:#FF4C4C"></span>High trauma</span>
+      <span><span class="sw" style="background:#FFD700"></span>Moderate trauma</span>
+      <span><span class="sw" style="background:#4CAF50"></span>Low trauma</span>
+    </div>
+    <p class="note">Hover nodes/links for details. Costs/outcomes are placeholders; citations will be linked once local numbers are finalized.</p>
+  </div>
+  <aside class="card">
+    <h3 style="margin:6px 6px 8px">Details</h3>
+    <div id="details" class="note">Hover over a node to see costs, outcomes, and (when enabled) faith reflections.</div>
+    <h4 style="margin:12px 6px 6px">Debug Output</h4>
+    <div id="debug">Ready.</div>
+  </aside>
+</div>
+
+<div id="tooltip"></div>
 
 <script>
-const svg = d3.select("#chart");
-const width = document.body.clientWidth - 40, height = 500;
-svg.attr("width", width).attr("height", height);
-const debugEl = document.getElementById('debug');
+(function(){
+  const TRAUMA_COLORS = { low:'#4CAF50', moderate:'#FFD700', high:'#FF4C4C' };
 
-function logDebug(msg) {
-  debugEl.textContent += "\n" + msg;
-}
+  const nodesBase = [
+    { name: 'Street / Encampment', color:'#9aa3b2', harm:'moderate' },
+    { name: 'Police & Jail',       color:'#FF4C4C', harm:'high',    cost:'$60–$85/day (Indiana jails est.)', outcome:'Short-term incapacitation; record; lost stability', faith:'“Blessed are the merciful…” (Mt 5:7) — mercy requires redesign, not punishment.' },
+    { name: 'Courts',              color:'#ff9999', harm:'moderate',cost:'Varies by case & fees', outcome:'Fines, warrants; returns to street' },
+    { name: 'ER',                  color:'#FFD700', harm:'moderate',cost:'$30–$150 (Medicaid) • $2,400–$2,600 uninsured avg', outcome:'Crisis-only care; no prevention', faith:'“Bind up the brokenhearted.” — invest upstream.' },
+    { name: 'Shelter',             color:'#FFD700', harm:'moderate',cost:'(placeholder) $133/day lodging benchmark', outcome:'Temporary relief; barriers; re-traumatization', faith:'Does a bed without a path home fulfill our call to love?' },
+    { name: 'Foster Care',         color:'#ff9999', harm:'high',    cost:'$9,500–$27,700 per child/yr', outcome:'Family separation; long-term harm' },
+    { name: 'Housing First',       color:'#4CAF50', harm:'low',     cost:'Rapid Re-Housing ~$8.5k/yr; PSH ~$16.5–$20.1k', outcome:'Stability; reduced system use', faith:'“I was a stranger and you invited me in.” (Mt 25:35)' },
+    { name: 'Return to Street',    color:'#9aa3b2', harm:'moderate' },
+    { name: 'Ongoing Instability', color:'#FFCC00', harm:'moderate' },
+    { name: 'Death',               color:'#111',    harm:'high' },
+    { name: 'Stability',           color:'#4CAF50', harm:'low' }
+  ];
 
-function clearChart() {
-  svg.selectAll("*").remove();
-  document.getElementById('details').innerHTML = 'Chart cleared.';
-}
+  const linksCurrentBase = [
+    { s:0,t:1,v:20 },{ s:0,t:3,v:15 },{ s:0,t:4,v:25 },{ s:0,t:6,v:5 },
+    { s:1,t:2,v:12 },{ s:1,t:8,v:8 },
+    { s:3,t:8,v:12 },
+    { s:4,t:8,v:20 },{ s:4,t:6,v:5 },
+    { s:5,t:8,v:5 },
+    { s:6,t:10,v:10 },
+    { s:8,t:0,v:10 },{ s:8,t:9,v:2 }
+  ];
 
-function drawSankey(nodes, links) {
-  try {
-    clearChart();
-    const sankey = d3.sankey()
-      .nodeWidth(20)
-      .nodePadding(10)
-      .extent([[1, 1], [width - 1, height - 6]]);
-    const graph = sankey({ nodes: nodes.map(d => ({...d})), links: links.map(d => ({...d})) });
-    svg.append("g")
-      .selectAll("rect")
-      .data(graph.nodes)
-      .join("rect")
-      .attr("x", d => d.x0)
-      .attr("y", d => d.y0)
-      .attr("height", d => d.y1 - d.y0)
-      .attr("width", d => d.x1 - d.x0)
-      .attr("fill", "#4caf50")
-      .on("mouseover", (event, d) => {
-        document.getElementById('details').innerHTML = `<strong>${d.name}</strong>`;
-      });
-    svg.append("g")
-      .attr("fill", "none")
-      .selectAll("path")
-      .data(graph.links)
-      .join("path")
-      .attr("d", d3.sankeyLinkHorizontal())
-      .attr("stroke", "#999")
-      .attr("stroke-width", d => Math.max(1, d.width));
-  } catch (e) {
-    logDebug("Error drawing Sankey: " + e.message);
+  const linksHFBase = [
+    { s:0,t:6,v:30 },{ s:0,t:4,v:10 },{ s:0,t:3,v:8 },{ s:0,t:1,v:5 },
+    { s:6,t:10,v:35 }, { s:4,t:6,v:6 }, { s:3,t:6,v:5 }, { s:1,t:6,v:3 },
+    { s:8,t:6,v:8 }
+  ];
+
+  const el = document.getElementById('chart');
+  const tooltip = document.getElementById('tooltip');
+  const details = document.getElementById('details');
+  const debug = document.getElementById('debug');
+
+  const state = { view:'current', harm:true, faith:false, test:false };
+
+  function log(msg){ debug.textContent += "\\n" + msg; }
+
+  function size(){ 
+    const r = el.getBoundingClientRect(); 
+    return { w: Math.max(600, r.width||el.clientWidth||600), h: Math.max(560, r.height||el.clientHeight||560) }; 
   }
-}
 
-// Example data sets
-function renderCurrent() {
-  logDebug("Rendering Current System...");
-  drawSankey(
-    [{name:"Street"}, {name:"Jail"}],
-    [{source:0, target:1, value:5}]
-  );
-}
-function renderHousingFirst() {
-  logDebug("Rendering Housing First...");
-  drawSankey(
-    [{name:"Street"}, {name:"Housing"}],
-    [{source:0, target:1, value:5}]
-  );
-}
-function renderHumanHarm() {
-  logDebug("Rendering Human Harm Overlay...");
-  renderCurrent();
-}
-function renderFaithLens() {
-  logDebug("Rendering Faith Lens...");
-  renderCurrent();
-}
+  function colorFor(node){
+    if(!state.harm) return node.color || '#7ea3c9';
+    return TRAUMA_COLORS[node.harm] || (node.color || '#7ea3c9');
+  }
 
-function runHealthCheck() {
-  logDebug("Running Health Check...");
-  drawSankey(
-    [{name:"A"}, {name:"B"}],
-    [{source:0, target:1, value:2}]
-  );
-}
+  function nodeTooltip(d){
+    let html = `<strong>${d.name}</strong>`;
+    if(d.cost) html += `<br><em>Cost:</em> ${d.cost}`;
+    if(d.outcome) html += `<br><em>Outcomes:</em> ${d.outcome}`;
+    if(state.faith && d.faith) html += `<br><em>Faith Lens:</em> ${d.faith}`;
+    return html;
+  }
+
+  function toGraph(){
+    const nodes = nodesBase.map(d=>Object.assign({}, d));
+    const linksBase = state.view==='current' ? linksCurrentBase : linksHFBase;
+    const links = linksBase.map(({s,t,v})=>({ source:s, target:t, value:v }));
+    return { nodes, links };
+  }
+
+  function draw(graph){
+    el.innerHTML = '';
+    const { w,h } = size();
+    log(`draw w:${w} h:${h} view:${state.view} test:${state.test}`);
+
+    const svg = d3.select('#chart').append('svg').attr('width', w).attr('height', h);
+    const sankey = d3.sankey().nodeWidth(18).nodePadding(16).extent([[10,10],[w-10,h-10]]);
+
+    let layout;
+    try{
+      layout = sankey(graph);
+    }catch(e){
+      log('Layout error: '+ (e.message||e));
+      details.innerHTML = "<span class='note'>Layout failed. Check dataset indexes or values.</span>";
+      return;
+    }
+
+    // Links
+    svg.append('g').selectAll('path')
+      .data(layout.links)
+      .join('path')
+      .attr('d', d3.sankeyLinkHorizontal())
+      .attr('fill','none')
+      .attr('stroke','rgba(200,220,255,0.35)')
+      .attr('stroke-width', d=>Math.max(1, d.width))
+      .on('mousemove', (event,d)=>{
+        tooltip.style.opacity=1;
+        tooltip.style.left=(event.pageX+12)+'px';
+        tooltip.style.top =(event.pageY+12)+'px';
+        tooltip.innerHTML = `<strong>Flow</strong><br>${layout.nodes[d.source.index].name} → ${layout.nodes[d.target.index].name}<br>People (placeholder): <strong>${d.value}</strong>`;
+      })
+      .on('mouseleave', ()=> tooltip.style.opacity=0);
+
+    // Nodes
+    const g = svg.append('g').selectAll('g').data(layout.nodes).join('g');
+
+    g.append('rect')
+      .attr('x', d=>d.x0).attr('y', d=>d.y0)
+      .attr('height', d=>Math.max(1, d.y1-d.y0))
+      .attr('width', d=>Math.max(1, d.x1-d.x0))
+      .attr('rx', 6)
+      .attr('fill', d=>colorFor(d))
+      .attr('stroke','#0b0c10')
+      .on('mousemove',(event,d)=>{
+        tooltip.style.opacity=1;
+        tooltip.style.left=(event.pageX+12)+'px';
+        tooltip.style.top =(event.pageY+12)+'px';
+        tooltip.innerHTML = nodeTooltip(d);
+      })
+      .on('mouseleave', ()=> tooltip.style.opacity=0)
+      .on('click', (_,d)=>{ details.innerHTML = nodeTooltip(d); });
+
+    const mid = w/2;
+    g.append('text')
+      .attr('x', d=> d.x0<mid ? d.x1+6 : d.x0-6 )
+      .attr('y', d=> (d.y0+d.y1)/2 )
+      .attr('dy', '0.35em')
+      .attr('text-anchor', d=> d.x0<mid ? 'start' : 'end')
+      .attr('fill','#e7edf5')
+      .style('font-size','12px')
+      .text(d=>d.name);
+  }
+
+  function render(){
+    if(!(window.d3 && d3.sankey)){ details.innerHTML = "<span class='note'>Waiting for libraries…</span>"; return; }
+    if(state.test){
+      const test = { nodes:[{name:'A',harm:'low',color:'#4CAF50'},{name:'B',harm:'high',color:'#FF4C4C'}], links:[{source:0,target:1,value:5}] };
+      draw(test); details.innerHTML = "<span class='note'>Health check rendered.</span>"; return;
+    }
+    draw(toGraph());
+    details.innerHTML = "<span class='note'>Tip: Click a node to pin details here.</span>";
+  }
+
+  // Buttons
+  const bCur = document.getElementById('btn-current');
+  const bHF  = document.getElementById('btn-hf');
+  const bHarm= document.getElementById('btn-harm');
+  const bFaith=document.getElementById('btn-faith');
+  document.getElementById('btn-health').onclick=()=>{ state.test=true; render(); };
+  document.getElementById('btn-reset').onclick =()=>{ state.test=false; render(); };
+
+  bCur.onclick = ()=>{ state.view='current'; bCur.setAttribute('aria-pressed','true'); bHF.setAttribute('aria-pressed','false'); state.test=false; render(); };
+  bHF.onclick  = ()=>{ state.view='hf';      bHF.setAttribute('aria-pressed','true'); bCur.setAttribute('aria-pressed','false'); state.test=false; render(); };
+  bHarm.onclick= ()=>{ state.harm=!state.harm; bHarm.setAttribute('aria-pressed', String(state.harm)); render(); };
+  bFaith.onclick=()=>{ state.faith=!state.faith; bFaith.setAttribute('aria-pressed', String(state.faith)); render(); };
+
+  // Resize
+  const ro = new ResizeObserver(()=> render());
+  ro.observe(document.getElementById('chart'));
+
+  // First paint
+  render();
+})();
 </script>
 </body>
 </html>
