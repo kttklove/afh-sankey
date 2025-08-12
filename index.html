@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>The Business of Homelessness — Indiana (Prototype)</title>
+<title>The Business of Homelessness — Indiana (Prototype, Circular)</title>
 <style>
   :root{ --bg:#111; --fg:#eee; --muted:#9aa3b2; --green:#4CAF50; --yellow:#FFD700; --red:#FF4C4C; }
   html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
@@ -25,7 +25,7 @@
 </style>
 <!-- Local libs with CDN fallback -->
 <script src="lib/d3.v7.min.js" onerror="this.onerror=null; this.src='https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js';"></script>
-<script src="lib/d3-sankey.min.js" onerror="this.onerror=null; this.src='https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js';"></script>
+<script src="lib/d3-sankey-circular.min.js" onerror="this.onerror=null; this.src='https://cdn.jsdelivr.net/npm/d3-sankey-circular@0.70.2/dist/d3-sankey-circular.min.js';"></script>
 </head>
 <body>
 <h1>The Business of Homelessness — Indiana (Prototype)</h1>
@@ -66,18 +66,19 @@
 
   const nodesBase = [
     { name: 'Street / Encampment', color:'#9aa3b2', harm:'moderate' },
-    { name: 'Police & Jail',       color:'#FF4C4C', harm:'high',    cost:'$60–$85/day (Indiana jails est.)', outcome:'Short-term incapacitation; record; lost stability', faith:'“Blessed are the merciful…” (Mt 5:7) — mercy requires redesign, not punishment.' },
+    { name: 'Police & Jail',       color:'#FF4C4C', harm:'high',    cost:'$60–$85/day (Indiana jails est.)', outcome:'Short-term incapacitation; record; lost stability' },
     { name: 'Courts',              color:'#ff9999', harm:'moderate',cost:'Varies by case & fees', outcome:'Fines, warrants; returns to street' },
-    { name: 'ER',                  color:'#FFD700', harm:'moderate',cost:'$30–$150 (Medicaid) • $2,400–$2,600 uninsured avg', outcome:'Crisis-only care; no prevention', faith:'“Bind up the brokenhearted.” — invest upstream.' },
-    { name: 'Shelter',             color:'#FFD700', harm:'moderate',cost:'(placeholder) $133/day lodging benchmark', outcome:'Temporary relief; barriers; re-traumatization', faith:'Does a bed without a path home fulfill our call to love?' },
-    { name: 'Foster Care',         color:'#ff9999', harm:'high',    cost:'$9,500–$27,700 per child/yr', outcome:'Family separation; long-term harm' },
-    { name: 'Housing First',       color:'#4CAF50', harm:'low',     cost:'Rapid Re-Housing ~$8.5k/yr; PSH ~$16.5–$20.1k', outcome:'Stability; reduced system use', faith:'“I was a stranger and you invited me in.” (Mt 25:35)' },
+    { name: 'ER',                  color:'#FFD700', harm:'moderate',cost:'$30–$150 (Medicaid) • $2.4–$2.6k uninsured avg', outcome:'Crisis-only care; no prevention' },
+    { name: 'Shelter',             color:'#FFD700', harm:'moderate',cost:'(placeholder) $133/day lodging benchmark', outcome:'Temporary relief; barriers; re-traumatization' },
+    { name: 'Foster Care',         color:'#ff9999', harm:'high',    cost:'$9.5–$27.7k per child/yr', outcome:'Family separation; long-term harm' },
+    { name: 'Housing First',       color:'#4CAF50', harm:'low',     cost:'RRH ~$8.5k/yr; PSH ~$16.5–$20.1k', outcome:'Stability; reduced system use' },
     { name: 'Return to Street',    color:'#9aa3b2', harm:'moderate' },
     { name: 'Ongoing Instability', color:'#FFCC00', harm:'moderate' },
     { name: 'Death',               color:'#111',    harm:'high' },
     { name: 'Stability',           color:'#4CAF50', harm:'low' }
   ];
 
+  // Restore churn link 8 → 0 (loop)
   const linksCurrentBase = [
     { s:0,t:1,v:20 },{ s:0,t:3,v:15 },{ s:0,t:4,v:25 },{ s:0,t:6,v:5 },
     { s:1,t:2,v:12 },{ s:1,t:8,v:8 },
@@ -85,7 +86,8 @@
     { s:4,t:8,v:20 },{ s:4,t:6,v:5 },
     { s:5,t:8,v:5 },
     { s:6,t:10,v:10 },
-    { s:8,t:0,v:10 },{ s:8,t:9,v:2 }
+    { s:8,t:0,v:10 }, // churn back to Street
+    { s:8,t:9,v:2 }
   ];
 
   const linksHFBase = [
@@ -102,68 +104,56 @@
   const state = { view:'current', harm:true, faith:false, test:false };
 
   function log(msg){ debug.textContent += "\\n" + msg; }
-
-  function size(){ 
-    const r = el.getBoundingClientRect(); 
-    return { w: Math.max(600, r.width||el.clientWidth||600), h: Math.max(560, r.height||el.clientHeight||560) }; 
-  }
-
-  function colorFor(node){
-    if(!state.harm) return node.color || '#7ea3c9';
-    return TRAUMA_COLORS[node.harm] || (node.color || '#7ea3c9');
-  }
-
-  function nodeTooltip(d){
-    let html = `<strong>${d.name}</strong>`;
-    if(d.cost) html += `<br><em>Cost:</em> ${d.cost}`;
-    if(d.outcome) html += `<br><em>Outcomes:</em> ${d.outcome}`;
-    if(state.faith && d.faith) html += `<br><em>Faith Lens:</em> ${d.faith}`;
-    return html;
-  }
+  function size(){ const r = el.getBoundingClientRect(); return { w: Math.max(600, r.width||el.clientWidth||600), h: Math.max(560, r.height||el.clientHeight||560) }; }
+  function colorFor(n){ return state.harm ? ( {low:'#4CAF50',moderate:'#FFD700',high:'#FF4C4C'}[n.harm] || n.color || '#7ea3c9') : (n.color||'#7ea3c9'); }
+  function tip(n){ let h = `<strong>${n.name}</strong>`; if(n.cost) h+=`<br><em>Cost:</em> ${n.cost}`; if(n.outcome) h+=`<br><em>Outcomes:</em> ${n.outcome}`; return h; }
 
   function toGraph(){
     const nodes = nodesBase.map(d=>Object.assign({}, d));
-    const linksBase = state.view==='current' ? linksCurrentBase : linksHFBase;
-    const links = linksBase.map(({s,t,v})=>({ source:s, target:t, value:v }));
-    return { nodes, links };
+    const L = (state.view==='current'?linksCurrentBase:linksHFBase).map(({s,t,v})=>({source:s,target:t,value:v}));
+    return { nodes, links:L };
   }
 
   function draw(graph){
-    el.innerHTML = '';
+    el.innerHTML='';
     const { w,h } = size();
     log(`draw w:${w} h:${h} view:${state.view} test:${state.test}`);
 
-    const svg = d3.select('#chart').append('svg').attr('width', w).attr('height', h);
-    const sankey = d3.sankey().nodeWidth(18).nodePadding(16).extent([[10,10],[w-10,h-10]]);
+    const make = d3.sankeyCircular ? d3.sankeyCircular : d3.sankey;
+    const sankey = make()
+      .nodeWidth(18)
+      .nodePadding(16)
+      .circularLinkGap && sankey.circularLinkGap(4); // only on circular
+    if(sankey.extent) sankey.extent([[10,10],[w-10,h-10]]);
+    else sankey.size && sankey.size([w-20,h-20]); // older circular builds
 
     let layout;
     try{
       layout = sankey(graph);
     }catch(e){
-      log('Layout error: '+ (e.message||e));
+      log('Layout error: '+(e.message||e));
       details.innerHTML = "<span class='note'>Layout failed. Check dataset indexes or values.</span>";
       return;
     }
 
-    // Links
+    const svg = d3.select('#chart').append('svg').attr('width',w).attr('height',h);
+    const pathGen = d3.sankeyLinkCircular ? d3.sankeyLinkCircular() : d3.sankeyLinkHorizontal();
+
     svg.append('g').selectAll('path')
       .data(layout.links)
       .join('path')
-      .attr('d', d3.sankeyLinkHorizontal())
+      .attr('d', pathGen)
       .attr('fill','none')
       .attr('stroke','rgba(200,220,255,0.35)')
       .attr('stroke-width', d=>Math.max(1, d.width))
       .on('mousemove', (event,d)=>{
-        tooltip.style.opacity=1;
-        tooltip.style.left=(event.pageX+12)+'px';
-        tooltip.style.top =(event.pageY+12)+'px';
-        tooltip.innerHTML = `<strong>Flow</strong><br>${layout.nodes[d.source.index].name} → ${layout.nodes[d.target.index].name}<br>People (placeholder): <strong>${d.value}</strong>`;
+        const s = layout.nodes[d.source.index].name, t = layout.nodes[d.target.index].name;
+        tooltip.style.opacity=1; tooltip.style.left=(event.pageX+12)+'px'; tooltip.style.top=(event.pageY+12)+'px';
+        tooltip.innerHTML = `<strong>Flow</strong><br>${s} → ${t}<br>People (placeholder): <strong>${d.value}</strong>`;
       })
       .on('mouseleave', ()=> tooltip.style.opacity=0);
 
-    // Nodes
     const g = svg.append('g').selectAll('g').data(layout.nodes).join('g');
-
     g.append('rect')
       .attr('x', d=>d.x0).attr('y', d=>d.y0)
       .attr('height', d=>Math.max(1, d.y1-d.y0))
@@ -171,14 +161,9 @@
       .attr('rx', 6)
       .attr('fill', d=>colorFor(d))
       .attr('stroke','#0b0c10')
-      .on('mousemove',(event,d)=>{
-        tooltip.style.opacity=1;
-        tooltip.style.left=(event.pageX+12)+'px';
-        tooltip.style.top =(event.pageY+12)+'px';
-        tooltip.innerHTML = nodeTooltip(d);
-      })
+      .on('mousemove',(event,d)=>{ tooltip.style.opacity=1; tooltip.style.left=(event.pageX+12)+'px'; tooltip.style.top=(event.pageY+12)+'px'; tooltip.innerHTML = tip(d); })
       .on('mouseleave', ()=> tooltip.style.opacity=0)
-      .on('click', (_,d)=>{ details.innerHTML = nodeTooltip(d); });
+      .on('click', (_,d)=>{ details.innerHTML = tip(d); });
 
     const mid = w/2;
     g.append('text')
@@ -192,13 +177,14 @@
   }
 
   function render(){
-    if(!(window.d3 && d3.sankey)){ details.innerHTML = "<span class='note'>Waiting for libraries…</span>"; return; }
-    if(state.test){
-      const test = { nodes:[{name:'A',harm:'low',color:'#4CAF50'},{name:'B',harm:'high',color:'#FF4C4C'}], links:[{source:0,target:1,value:5}] };
-      draw(test); details.innerHTML = "<span class='note'>Health check rendered.</span>"; return;
+    if(!(window.d3 && (d3.sankeyCircular || d3.sankey))){
+      details.innerHTML = "<span class='note'>Waiting for libraries…</span>"; return;
     }
-    draw(toGraph());
-    details.innerHTML = "<span class='note'>Tip: Click a node to pin details here.</span>";
+    if(state.test){
+      const test = { nodes:[{name:'A',harm:'low',color:'#4CAF50'},{name:'B',harm:'high',color:'#FF4C4C'}], links:[{source:0,target:1,value:5},{source:1,target:0,value:2}] };
+      draw(test); details.innerHTML = "<span class='note'>Health check rendered (with a loop).</span>"; return;
+    }
+    draw(toGraph()); details.innerHTML = "<span class='note'>Tip: Click a node to pin details here.</span>";
   }
 
   // Buttons
@@ -218,7 +204,6 @@
   const ro = new ResizeObserver(()=> render());
   ro.observe(document.getElementById('chart'));
 
-  // First paint
   render();
 })();
 </script>
