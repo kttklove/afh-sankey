@@ -2,37 +2,25 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>The Business of Homelessness — Indiana (Prototype CDN, Circular)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>The Business of Homelessness — Indiana (Circular CDN)</title>
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
 <style>
   :root{ --bg:#111; --fg:#eee; --muted:#9aa3b2; --green:#4CAF50; --yellow:#FFD700; --red:#FF4C4C; }
   html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
-  h1{margin:0;padding:20px}
-  .lead{color:var(--muted);padding:0 20px 10px}
+  h1{margin:0;padding:20px}.lead{color:var(--muted);padding:0 20px 10px}
   .buttons{padding:10px 20px;display:flex;flex-wrap:wrap;gap:8px}
   button{padding:8px 12px;background:#1b1b1b;color:#fff;border:1px solid #3a3a3a;border-radius:999px;cursor:pointer}
-  button[aria-pressed="true"]{outline:2px solid #76c7ff}
-  button:hover{background:#2a2a2a}
-  .row{display:grid;grid-template-columns:1fr;gap:16px;padding:0 20px 20px}
-  @media(min-width:900px){.row{grid-template-columns:2.2fr 1fr}}
+  button[aria-pressed="true"]{outline:2px solid #76c7ff}button:hover{background:#2a2a2a}
+  .row{display:grid;grid-template-columns:1fr;gap:16px;padding:0 20px 20px}@media(min-width:900px){.row{grid-template-columns:2.2fr 1fr}}
   .card{background:#161616;border:1px solid #2a2a2a;border-radius:16px;padding:12px}
   #chart{width:100%;height:560px;min-height:360px}
   #tooltip{position:fixed;pointer-events:none;background:#0f1218;border:1px solid #2a2f3a;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.35;max-width:320px;color:#e7edf5;z-index:3;opacity:0}
-  #debug{background:#222;color:#0f0;font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;white-space:pre-wrap;padding:10px;border-radius:12px}
+  #debug{background:#222;color:#0f0;font-family:ui-monospace,Monaco,Consolas,monospace;white-space:pre-wrap;padding:10px;border-radius:12px}
   .legend{display:flex;gap:14px;align-items:center;margin-top:8px;color:#cbd5e1;font-size:13px}
   .sw{width:14px;height:14px;border-radius:4px;display:inline-block;margin-right:6px;border:1px solid #111}
   .note{font-size:12px;color:#9aa3b2}
 </style>
-<!-- Core libs -->
-<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
-<!-- d3-sankey-circular (with two CDNs for robustness) -->
-<script src="https://cdn.jsdelivr.net/npm/d3-sankey-circular@0.70.2/dist/d3-sankey-circular.min.js"></script>
-<script>
-  if(!window.d3 || !d3.sankeyCircular){
-    document.write('<script src="https://unpkg.com/d3-sankey-circular@0.70.2/dist/d3-sankey-circular.min.js"><\\/script>');
-  }
-</script>
 </head>
 <body>
 <h1>The Business of Homelessness — Indiana (Prototype)</h1>
@@ -59,165 +47,89 @@
   </div>
   <aside class="card">
     <h3 style="margin:6px 6px 8px">Details</h3>
-    <div id="details" class="note">Hover over a node to see costs, outcomes, and (when enabled) faith reflections.</div>
+    <div id="details" class="note">Loading libraries…</div>
     <h4 style="margin:12px 6px 6px">Debug Output</h4>
-    <div id="debug">Ready.</div>
+    <div id="debug">Bootstrapping…</div>
   </aside>
 </div>
 
 <div id="tooltip"></div>
 
 <script>
+function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('load fail '+src));document.head.appendChild(s);});}
+async function ensureLibs(){
+  const d=document.getElementById('debug'); const log=m=>d.textContent+=("\\n"+m);
+  await loadScript('https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js'); log('Loaded CDN d3.');
+  await loadScript('https://cdn.jsdelivr.net/npm/d3-sankey-circular@0.70.2/dist/d3-sankey-circular.min.js'); log('Loaded CDN d3-sankey-circular.');
+}
+</script>
+
+<script>
+/* ---- same app code as index.html ---- */
 (function(){
-  const TRAUMA_COLORS = { low:'#4CAF50', moderate:'#FFD700', high:'#FF4C4C' };
+  const details=document.getElementById('details'); const debug=document.getElementById('debug'); const chartEl=document.getElementById('chart'); const tooltip=document.getElementById('tooltip');
+  const log=m=>debug.textContent+=("\\n"+m);
+  const TRAUMA_COLORS={low:'#4CAF50',moderate:'#FFD700',high:'#FF4C4C'};
 
-  const nodesBase = [
-    { name: 'Street / Encampment', color:'#9aa3b2', harm:'moderate' },
-    { name: 'Police & Jail',       color:'#FF4C4C', harm:'high',    cost:'$60–$85/day (Indiana jails est.)', outcome:'Short-term incapacitation; record; lost stability', faith:'“Blessed are the merciful…” (Mt 5:7)' },
-    { name: 'Courts',              color:'#ff9999', harm:'moderate',cost:'Varies by case & fees', outcome:'Fines, warrants; returns to street' },
-    { name: 'ER',                  color:'#FFD700', harm:'moderate',cost:'$30–$150 (Medicaid) • $2.4–$2.6k uninsured avg', outcome:'Crisis-only care; no prevention' },
-    { name: 'Shelter',             color:'#FFD700', harm:'moderate',cost:'(placeholder) $133/day lodging benchmark', outcome:'Temporary relief; barriers; re-traumatization' },
-    { name: 'Foster Care',         color:'#ff9999', harm:'high',    cost:'$9.5–$27.7k per child/yr', outcome:'Family separation; long-term harm' },
-    { name: 'Housing First',       color:'#4CAF50', harm:'low',     cost:'RRH ~$8.5k/yr; PSH ~$16.5–$20.1k', outcome:'Stability; reduced system use' },
-    { name: 'Return to Street',    color:'#9aa3b2', harm:'moderate' },
-    { name: 'Ongoing Instability', color:'#FFCC00', harm:'moderate' },
-    { name: 'Death',               color:'#111',    harm:'high' },
-    { name: 'Stability',           color:'#4CAF50', harm:'low' }
-  ];
+  const nodesBase=[{name:'Street / Encampment',color:'#9aa3b2',harm:'moderate'},{name:'Police & Jail',color:'#FF4C4C',harm:'high',cost:'$60–$85/day',outcome:'Short-term incapacitation; record; lost stability'},{name:'Courts',color:'#ff9999',harm:'moderate',cost:'Varies by case & fees',outcome:'Fines, warrants; returns to street'},{name:'ER',color:'#FFD700',harm:'moderate',cost:'$30–$150 Medicaid; $2.4–$2.6k uninsured',outcome:'Crisis-only care; no prevention'},{name:'Shelter',color:'#FFD700',harm:'moderate',cost:'(placeholder) $133/day',outcome:'Temporary relief; barriers; re-traumatization'},{name:'Foster Care',color:'#ff9999',harm:'high',cost:'$9.5–$27.7k per child/yr',outcome:'Family separation; long-term harm'},{name:'Housing First',color:'#4CAF50',harm:'low',cost:'RRH ~$8.5k/yr; PSH ~$16.5–$20.1k',outcome:'Stability; reduced system use'},{name:'Return to Street',color:'#9aa3b2',harm:'moderate'},{name:'Ongoing Instability',color:'#FFCC00',harm:'moderate'},{name:'Death',color:'#111',harm:'high'},{name:'Stability',color:'#4CAF50',harm:'low'}];
 
-  // NOTE: This contains the churn link 8 → 0 (circular)
-  const linksCurrentBase = [
-    { s:0,t:1,v:20 },{ s:0,t:3,v:15 },{ s:0,t:4,v:25 },{ s:0,t:6,v:5 },
-    { s:1,t:2,v:12 },{ s:1,t:8,v:8 },
-    { s:3,t:8,v:12 },
-    { s:4,t:8,v:20 },{ s:4,t:6,v:5 },
-    { s:5,t:8,v:5 },
-    { s:6,t:10,v:10 },
-    { s:8,t:0,v:10 }, // churn back to Street (loop)
-    { s:8,t:9,v:2 }
-  ];
+  const linksCurrentBase=[{s:0,t:1,v:20},{s:0,t:3,v:15},{s:0,t:4,v:25},{s:0,t:6,v:5},{s:1,t:2,v:12},{s:1,t:8,v:8},{s:3,t:8,v:12},{s:4,t:8,v:20},{s:4,t:6,v:5},{s:5,t:8,v:5},{s:6,t:10,v:10},{s:8,t:0,v:10},{s:8,t:9,v:2}];
+  const linksHFBase=[{s:0,t:6,v:30},{s:0,t:4,v:10},{s:0,t:3,v:8},{s:0,t:1,v:5},{s:6,t:10,v:35},{s:4,t:6,v:6},{s:3,t:6,v:5},{s:1,t:6,v:3},{s:8,t:6,v:8}];
 
-  const linksHFBase = [
-    { s:0,t:6,v:30 },{ s:0,t:4,v:10 },{ s:0,t:3,v:8 },{ s:0,t:1,v:5 },
-    { s:6,t:10,v:35 }, { s:4,t:6,v:6 }, { s:3,t:6,v:5 }, { s:1,t:6,v:3 },
-    { s:8,t:6,v:8 }
-  ];
+  const state={view:'current',harm:true,faith:false,test:false};
 
-  const el = document.getElementById('chart');
-  const tooltip = document.getElementById('tooltip');
-  const details = document.getElementById('details');
-  const debug = document.getElementById('debug');
+  function size(){const r=chartEl.getBoundingClientRect();return{w:Math.max(600,r.width||chartEl.clientWidth||600),h:Math.max(560,r.height||chartEl.clientHeight||560)};}
+  function colorFor(n){return state.harm?(TRAUMA_COLORS[n.harm]||n.color||'#7ea3c9'):(n.color||'#7ea3c9');}
+  function tip(n){let h=`<strong>${n.name}</strong>`;if(n.cost)h+=`<br><em>Cost:</em> ${n.cost}`;if(n.outcome)h+=`<br><em>Outcomes:</em> ${n.outcome}`;return h;}
 
-  const state = { view:'current', harm:true, faith:false, test:false };
-
-  function log(msg){ debug.textContent += "\\n" + msg; }
-  function size(){ const r = el.getBoundingClientRect(); return { w: Math.max(600, r.width||el.clientWidth||600), h: Math.max(560, r.height||el.clientHeight||560) }; }
-  function colorFor(n){ return state.harm ? ( {low:'#4CAF50',moderate:'#FFD700',high:'#FF4C4C'}[n.harm] || n.color || '#7ea3c9') : (n.color||'#7ea3c9'); }
-  function tip(n){ let h = `<strong>${n.name}</strong>`; if(n.cost) h+=`<br><em>Cost:</em> ${n.cost}`; if(n.outcome) h+=`<br><em>Outcomes:</em> ${n.outcome}`; if(state.faith && n.faith) h+=`<br><em>Faith Lens:</em> ${n.faith}`; return h; }
-
-  function toGraph(){
-    const nodes = nodesBase.map(d=>Object.assign({}, d));
-    const L = (state.view==='current'?linksCurrentBase:linksHFBase).map(({s,t,v})=>({source:s,target:t,value:v}));
-    return { nodes, links:L };
-  }
+  function toGraph(){const nodes=nodesBase.map(d=>Object.assign({},d));const base=state.view==='current'?linksCurrentBase:linksHFBase;const links=base.map(({s,t,v})=>({source:s,target:t,value:v}));return{nodes,links};}
 
   function draw(graph){
-    el.innerHTML='';
-    const { w,h } = size();
-    log(`draw w:${w} h:${h} view:${state.view} test:${state.test}`);
+    chartEl.innerHTML='';const {w,h}=size();log(`draw w:${w} h:${h} view:${state.view} test:${state.test}`);
+    const svg=d3.select('#chart').append('svg').attr('width',w).attr('height',h);
+    const make=d3.sankeyCircular?d3.sankeyCircular:d3.sankey; const sankey=make().nodeWidth(18).nodePadding(16);
+    if(sankey.extent) sankey.extent([[10,10],[w-10,h-10]]);
+    if(sankey.circularLinkGap) sankey.circularLinkGap(4); if(sankey.circularLinkMinRadius) sankey.circularLinkMinRadius(8);
 
-    // Use circular sankey if available; else fall back
-    const sankey = (d3.sankeyCircular ? d3.sankeyCircular() : d3.sankey())
-      .nodeWidth(18)
-      .nodePadding(16)
-      // circular-only options (ignored by standard sankey)
-      .circularLinkGap(4)
-      .circularLinkMinRadius(8)
-      .extent([[10,10],[w-10,h-10]]);
+    let layout; try{layout=sankey(graph);}catch(e){log('Layout error: '+(e.message||e));details.textContent='Layout failed.';return;}
+    const pathGen=d3.sankeyLinkCircular?d3.sankeyLinkCircular():d3.sankeyLinkHorizontal();
 
-    let layout;
-    try{
-      layout = sankey(graph);
-    }catch(e){
-      log('Layout error: '+(e.message||e));
-      details.innerHTML = "<span class='note'>Layout failed. Check dataset indexes or values.</span>";
-      return;
-    }
+    svg.append('g').selectAll('path').data(layout.links).join('path')
+      .attr('d',pathGen).attr('fill','none').attr('stroke','rgba(200,220,255,0.35)').attr('stroke-width',d=>Math.max(1,d.width))
+      .on('mousemove',(e,d)=>{const s=layout.nodes[d.source.index].name,t=layout.nodes[d.target.index].name;const tt=document.getElementById('tooltip');tt.style.opacity=1;tt.style.left=(e.pageX+12)+'px';tt.style.top=(e.pageY+12)+'px';tt.innerHTML=`<strong>Flow</strong><br>${s} → ${t}<br>People (placeholder): <strong>${d.value}</strong>`;})
+      .on('mouseleave',()=>{document.getElementById('tooltip').style.opacity=0;});
 
-    const svg = d3.select('#chart').append('svg').attr('width',w).attr('height',h);
+    const g=svg.append('g').selectAll('g').data(layout.nodes).join('g');
+    g.append('rect').attr('x',d=>d.x0).attr('y',d=>d.y0).attr('height',d=>Math.max(1,d.y1-d.y0)).attr('width',d=>Math.max(1,d.x1-d.x0)).attr('rx',6)
+      .attr('fill',d=>colorFor(d)).attr('stroke','#0b0c10')
+      .on('mousemove',(e,d)=>{const tt=document.getElementById('tooltip');tt.style.opacity=1;tt.style.left=(e.pageX+12)+'px';tt.style.top=(e.pageY+12)+'px';tt.innerHTML=tip(d);})
+      .on('mouseleave',()=>{document.getElementById('tooltip').style.opacity=0;})
+      .on('click',(_,d)=>{details.innerHTML=tip(d);});
 
-    // Choose the correct path generator
-    const pathGen = d3.sankeyLinkCircular ? d3.sankeyLinkCircular() : d3.sankeyLinkHorizontal();
-
-    // Links
-    svg.append('g').selectAll('path')
-      .data(layout.links)
-      .join('path')
-      .attr('d', pathGen)
-      .attr('fill','none')
-      .attr('stroke','rgba(200,220,255,0.35)')
-      .attr('stroke-width', d=>Math.max(1, d.width))
-      .on('mousemove', (event,d)=>{
-        const s = layout.nodes[d.source.index].name, t = layout.nodes[d.target.index].name;
-        tooltip.style.opacity=1; tooltip.style.left=(event.pageX+12)+'px'; tooltip.style.top=(event.pageY+12)+'px';
-        tooltip.innerHTML = `<strong>Flow</strong><br>${s} → ${t}<br>People (placeholder): <strong>${d.value}</strong>`;
-      })
-      .on('mouseleave', ()=> tooltip.style.opacity=0);
-
-    // Nodes
-    const g = svg.append('g').selectAll('g').data(layout.nodes).join('g');
-    g.append('rect')
-      .attr('x', d=>d.x0).attr('y', d=>d.y0)
-      .attr('height', d=>Math.max(1, d.y1-d.y0))
-      .attr('width', d=>Math.max(1, d.x1-d.x0))
-      .attr('rx', 6)
-      .attr('fill', d=>colorFor(d))
-      .attr('stroke','#0b0c10')
-      .on('mousemove',(event,d)=>{ tooltip.style.opacity=1; tooltip.style.left=(event.pageX+12)+'px'; tooltip.style.top=(event.pageY+12)+'px'; tooltip.innerHTML = tip(d); })
-      .on('mouseleave', ()=> tooltip.style.opacity=0)
-      .on('click', (_,d)=>{ details.innerHTML = tip(d); });
-
-    const mid = w/2;
-    g.append('text')
-      .attr('x', d=> d.x0<mid ? d.x1+6 : d.x0-6 )
-      .attr('y', d=> (d.y0+d.y1)/2 )
-      .attr('dy','0.35em')
-      .attr('text-anchor', d=> d.x0<mid ? 'start' : 'end')
-      .attr('fill','#e7edf5')
-      .style('font-size','12px')
-      .text(d=>d.name);
+    const mid=w/2; g.append('text').attr('x',d=>d.x0<mid?d.x1+6:d.x0-6).attr('y',d=>(d.y0+d.y1)/2).attr('dy','0.35em')
+      .attr('text-anchor',d=>d.x0<mid?'start':'end').attr('fill','#e7edf5').style('font-size','12px').text(d=>d.name);
   }
 
   function render(){
-    if(!(window.d3 && (d3.sankeyCircular || d3.sankey))){
-      details.innerHTML = "<span class='note'>Waiting for libraries…</span>"; return;
-    }
-    if(state.test){
-      const test = { nodes:[{name:'A',harm:'low',color:'#4CAF50'},{name:'B',harm:'high',color:'#FF4C4C'}], links:[{source:0,target:1,value:5},{source:1,target:0,value:2}] };
-      draw(test); details.innerHTML = "<span class='note'>Health check rendered (with a loop).</span>"; return;
-    }
-    draw(toGraph()); details.innerHTML = "<span class='note'>Tip: Click a node to pin details here.</span>";
+    if(!(window.d3 && (d3.sankeyCircular||d3.sankey))){details.textContent='Waiting for libraries…';return;}
+    if(state.test){draw({nodes:[{name:'A',harm:'low',color:'#4CAF50'},{name:'B',harm:'high',color:'#FF4C4C'}],links:[{source:0,target:1,value:5},{source:1,target:0,value:2}]});details.textContent='Health check rendered (with a loop).';return;}
+    draw(toGraph());details.textContent='Tip: Click a node to pin details here.';
   }
 
-  // Buttons
-  const bCur = document.getElementById('btn-current');
-  const bHF  = document.getElementById('btn-hf');
-  const bHarm= document.getElementById('btn-harm');
-  const bFaith=document.getElementById('btn-faith');
-  document.getElementById('btn-health').onclick=()=>{ state.test=true; render(); };
-  document.getElementById('btn-reset').onclick =()=>{ state.test=false; render(); };
+  // buttons
+  const setP=(id,v)=>document.getElementById(id).setAttribute('aria-pressed',String(v));
+  document.getElementById('btn-current').onclick=()=>{state.view='current';setP('btn-current',true);setP('btn-hf',false);state.test=false;render();};
+  document.getElementById('btn-hf').onclick     =()=>{state.view='hf';setP('btn-hf',true);setP('btn-current',false);state.test=false;render();};
+  document.getElementById('btn-harm').onclick   =()=>{state.harm=!state.harm;setP('btn-harm',state.harm);render();};
+  document.getElementById('btn-faith').onclick  =()=>{state.faith=!state.faith;setP('btn-faith',state.faith);render();};
+  document.getElementById('btn-health').onclick =()=>{state.test=true;render();};
+  document.getElementById('btn-reset').onclick  =()=>{state.test=false;render();};
 
-  bCur.onclick = ()=>{ state.view='current'; bCur.setAttribute('aria-pressed','true'); bHF.setAttribute('aria-pressed','false'); state.test=false; render(); };
-  bHF.onclick  = ()=>{ state.view='hf';      bHF.setAttribute('aria-pressed','true'); bCur.setAttribute('aria-pressed','false'); state.test=false; render(); };
-  bHarm.onclick= ()=>{ state.harm=!state.harm; bHarm.setAttribute('aria-pressed', String(state.harm)); render(); };
-  bFaith.onclick=()=>{ state.faith=!state.faith; bFaith.setAttribute('aria-pressed', String(state.faith)); render(); };
+  const ro=new ResizeObserver(()=>render()); ro.observe(chartEl);
 
-  // Resize
-  const ro = new ResizeObserver(()=> render());
-  ro.observe(document.getElementById('chart'));
-
-  // First paint
-  render();
+  (async function boot(){
+    try{ await ensureLibs(); render(); }catch(e){ debug.textContent += "\\nCDN load failed: "+(e.message||e); }
+  })();
 })();
 </script>
 </body>
