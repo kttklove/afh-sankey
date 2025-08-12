@@ -58,24 +58,51 @@
 <div id="tooltip"></div>
 
 <script>
-/* ---------- Robust loader: try local, fall back to CDN ---------- */
-function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('load fail '+src));document.head.appendChild(s);});}
-async function ensureLibs(){
-  const debug=document.getElementById('debug');
-  const log=m=>debug.textContent+=("\\n"+m);
-  try{
-    // Try LOCAL first
-    await loadScript('./lib/d3.v7.min.js'); log('Loaded local d3.');
-  }catch(e){
-    log('Local d3 failed, trying CDN…'); await loadScript('https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js'); log('Loaded CDN d3.');
+function loadScript(src){
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src; s.async = true;
+    s.onload = () => res(src);
+    s.onerror = () => rej(new Error('load fail ' + src));
+    document.head.appendChild(s);
+  });
+}
+
+// Try several known URLs for d3-sankey-circular
+async function loadSankeyCircular(debugLog){
+  const candidates = [
+    // jsDelivr (min and non-min)
+    'https://cdn.jsdelivr.net/npm/d3-sankey-circular@0.70.2/dist/d3-sankey-circular.min.js',
+    'https://cdn.jsdelivr.net/npm/d3-sankey-circular@0.70.2/dist/d3-sankey-circular.js',
+    // UNPKG (min and non-min)
+    'https://unpkg.com/d3-sankey-circular@0.70.2/dist/d3-sankey-circular.min.js',
+    'https://unpkg.com/d3-sankey-circular@0.70.2/dist/d3-sankey-circular.js',
+  ];
+  for (const url of candidates) {
+    try { await loadScript(url); debugLog('Loaded circular: ' + url); return true; }
+    catch(e){ debugLog('Failed: ' + url); }
   }
-  try{
-    await loadScript('./lib/d3-sankey-circular.min.js'); log('Loaded local d3-sankey-circular.');
-  }catch(e){
-    log('Local circular failed, trying CDN…'); await loadScript('https://cdn.jsdelivr.net/npm/d3-sankey-circular@0.70.2/dist/d3-sankey-circular.min.js'); log('Loaded CDN d3-sankey-circular.');
+  return false;
+}
+
+async function ensureLibs(){
+  const debug = document.getElementById('debug');
+  const log = m => debug.textContent += '\n' + m;
+
+  // d3 core
+  try { await loadScript('https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js'); log('Loaded d3 core.'); }
+  catch { 
+    await loadScript('https://unpkg.com/d3@7/dist/d3.min.js'); log('Loaded d3 core (fallback).');
+  }
+
+  // circular plugin
+  const ok = await loadSankeyCircular(log);
+  if (!ok) {
+    log('All circular CDNs failed. Will render with standard d3-sankey and draw churn manually.');
   }
 }
 </script>
+
 
 <script>
 /* ---------- App code (same in both files) ---------- */
