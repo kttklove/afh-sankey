@@ -1,3 +1,118 @@
-<!-- same as index.html but replace the two <script> tags with: -->
-<script defer src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>The Business of Homelessness — Indiana (Prototype CDN)</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 0; background: #111; color: #eee; }
+  h1 { margin: 0; padding: 20px; }
+  .buttons { padding: 10px 20px; }
+  button {
+    margin-right: 10px; padding: 8px 12px;
+    background: #222; color: #fff; border: 1px solid #555; cursor: pointer;
+  }
+  button:hover { background: #444; }
+  #chart { width: 100%; height: 500px; }
+  #details, #debug { padding: 10px 20px; }
+  #debug { background: #222; color: #0f0; font-family: monospace; white-space: pre-wrap; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
+</head>
+<body>
+<h1>The Business of Homelessness — Indiana (Prototype CDN)</h1>
+<div class="buttons">
+  <button onclick="renderCurrent()">Current System</button>
+  <button onclick="renderHousingFirst()">Housing First</button>
+  <button onclick="renderHumanHarm()">Human Harm Overlay</button>
+  <button onclick="renderFaithLens()">Faith Lens</button>
+  <button onclick="runHealthCheck()">Run Health Check</button>
+  <button onclick="clearChart()">Reset Prototype</button>
+</div>
+<svg id="chart"></svg>
+<div id="details">Hover over a node to see details.</div>
+<div id="debug">Debug Output:</div>
+
+<script>
+const svg = d3.select("#chart");
+const width = document.body.clientWidth - 40, height = 500;
+svg.attr("width", width).attr("height", height);
+const debugEl = document.getElementById('debug');
+
+function logDebug(msg) {
+  debugEl.textContent += "\n" + msg;
+}
+
+function clearChart() {
+  svg.selectAll("*").remove();
+  document.getElementById('details').innerHTML = 'Chart cleared.';
+}
+
+function drawSankey(nodes, links) {
+  try {
+    clearChart();
+    const sankey = d3.sankey()
+      .nodeWidth(20)
+      .nodePadding(10)
+      .extent([[1, 1], [width - 1, height - 6]]);
+    const graph = sankey({ nodes: nodes.map(d => ({...d})), links: links.map(d => ({...d})) });
+    svg.append("g")
+      .selectAll("rect")
+      .data(graph.nodes)
+      .join("rect")
+      .attr("x", d => d.x0)
+      .attr("y", d => d.y0)
+      .attr("height", d => d.y1 - d.y0)
+      .attr("width", d => d.x1 - d.x0)
+      .attr("fill", "#4caf50")
+      .on("mouseover", (event, d) => {
+        document.getElementById('details').innerHTML = `<strong>${d.name}</strong>`;
+      });
+    svg.append("g")
+      .attr("fill", "none")
+      .selectAll("path")
+      .data(graph.links)
+      .join("path")
+      .attr("d", d3.sankeyLinkHorizontal())
+      .attr("stroke", "#999")
+      .attr("stroke-width", d => Math.max(1, d.width));
+  } catch (e) {
+    logDebug("Error drawing Sankey: " + e.message);
+  }
+}
+
+// Example data sets
+function renderCurrent() {
+  logDebug("Rendering Current System...");
+  drawSankey(
+    [{name:"Street"}, {name:"Jail"}],
+    [{source:0, target:1, value:5}]
+  );
+}
+function renderHousingFirst() {
+  logDebug("Rendering Housing First...");
+  drawSankey(
+    [{name:"Street"}, {name:"Housing"}],
+    [{source:0, target:1, value:5}]
+  );
+}
+function renderHumanHarm() {
+  logDebug("Rendering Human Harm Overlay...");
+  renderCurrent();
+}
+function renderFaithLens() {
+  logDebug("Rendering Faith Lens...");
+  renderCurrent();
+}
+
+function runHealthCheck() {
+  logDebug("Running Health Check...");
+  drawSankey(
+    [{name:"A"}, {name:"B"}],
+    [{source:0, target:1, value:2}]
+  );
+}
+</script>
+</body>
+</html>
