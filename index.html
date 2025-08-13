@@ -139,9 +139,16 @@ async function ensureLibs(){
   function tip(n){ let h=`<strong>${n.name}</strong>`; if(n.cost)h+=`<br><em>Cost:</em> ${n.cost}`; if(n.outcome)h+=`<br><em>Outcomes:</em> ${n.outcome}`; return h; }
 
   function toGraph(){
-    const nodes = nodesBase.map(d=>Object.assign({},d));
-    const base  = state.view==='current' ? linksCurrentBase : linksHFBase;
-    const links = base.map(({s,t,v})=>({source:s,target:t,value:v}));
+    const nodes = nodesBase.map(d => ({ ...d }));
+    const base  = state.view === 'current' ? linksCurrentBase : linksHFBase;
+
+    // IMPORTANT: use node names and not numeric indices
+    const links = base.map(({ s, t, v }) => ({
+      source: nodes[s].name,
+      target: nodes[t].name,
+      value: v
+    }));
+
     return { nodes, links };
   }
 
@@ -153,17 +160,22 @@ async function ensureLibs(){
     const svg = d3.select('#chart').append('svg').attr('width',w).attr('height',h);
 
     const useCircular = !!(d3.sankeyCircular);
-    const make = useCircular ? d3.sankeyCircular : d3.sankey;
-    const sankey = make().nodeWidth(18).nodePadding(16);
-    if (sankey.extent) sankey.extent([[10,10],[w-10,h-10]]);
-    if (useCircular && sankey.circularLinkGap) sankey.circularLinkGap(4);
-    if (useCircular && sankey.circularLinkMinRadius) sankey.circularLinkMinRadius(8);
+	const make = useCircular ? d3.sankeyCircular : d3.sankey;
+	const sankey = make()
+	  .nodeId(d => d.name)        // <- key line
+	  .nodeWidth(18)
+	  .nodePadding(16);
 
-    let layout;
-    try { layout = sankey(graph); }
-    catch(e){ log('Layout error: '+(e.message||e)); details.textContent='Layout failed.'; return; }
+	if (sankey.extent) sankey.extent([[10,10],[w-10,h-10]]);
+	if (useCircular && sankey.circularLinkGap) sankey.circularLinkGap(4);
+	if (useCircular && sankey.circularLinkMinRadius) sankey.circularLinkMinRadius(8);
 
-    const pathGen = (useCircular && d3.sankeyLinkCircular) ? d3.sankeyLinkCircular() : d3.sankeyLinkHorizontal();
+	let layout;
+	try { layout = sankey(graph); }
+	catch(e){ log('Layout error: ' + (e.message || e)); details.textContent = 'Layout failed.'; return; }
+
+	const pathGen = (useCircular && d3.sankeyLinkCircular) ? d3.sankeyLinkCircular() : d3.sankeyLinkHorizontal();
+
 
     // Links
     svg.append('g').selectAll('path')
