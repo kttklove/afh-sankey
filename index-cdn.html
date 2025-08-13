@@ -56,236 +56,112 @@
 <div id="tooltip"></div>
 
 <script>
-function loadScript(src){
-  return new Promise((res,rej)=>{
-    const s=document.createElement('script');
-    s.src=src; s.async=true;
-    s.onload=()=>res(src);
-    s.onerror=()=>rej(new Error('load fail '+src));
-    document.head.appendChild(s);
-  });
-}
+/* ===== Robust loader + global error capture ===== */
+(function(){
+  const dbg = () => document.getElementById('debug');
+  const log = (m) => { const el = dbg(); if (el) el.textContent += '\n' + m; };
 
-async function ensureLibs(){
-  const debug=document.getElementById('debug');
-  const log=m=>debug.textContent+=('\n'+m);
+  // Show ANY runtime errors
+  window.addEventListener('error', (e) => log('window.error: ' + (e.message || e)));
+  window.addEventListener('unhandledrejection', (e) => log('unhandledrejection: ' + (e.reason && e.reason.message || e.reason)));
 
-  // 1) D3 core
-  try{ await loadScript('./lib/d3.v7.min.js'); log('Loaded local d3.'); }
-  catch{ await loadScript('https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js'); log('Loaded CDN d3.'); }
+  function loadScript(src, label, ms=15000){
+    return new Promise((resolve, reject) => {
+      let done = false;
+      const t = setTimeout(() => {
+        if (done) return;
+        done = true;
+        log('Timeout loading: ' + label + ' (' + src + ')');
+        reject(new Error('timeout ' + src));
+      }, ms);
 
-  // 2) Standard d3-sankey (required for fallback)
-  const sankeyCandidates = [
-    './lib/d3-sankey.min.js',
-    'https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js',
-    'https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.js',
-    'https://unpkg.com/d3-sankey@0.12.3/dist/d3-sankey.min.js',
-  ];
-  let sankeyOK=false;
-  for(const u of sankeyCandidates){
-    try{ await loadScript(u); log('Loaded standard sankey: '+u); sankeyOK=true; break; }
-    catch{ log('Failed: '+u); }
+      const s = document.createElement('script');
+      s.src = src; s.async = true; s.defer = false;
+      s.onload = () => { if (done) return; done = true; clearTimeout(t); log('Loaded: ' + label); resolve(src); };
+      s.onerror = () => { if (done) return; done = true; clearTimeout(t); log('Failed: ' + label + ' (' + src + ')'); reject(new Error('load fail ' + src)); };
+      document.head.appendChild(s);
+      log('Loading: ' + label + ' (' + src + ')');
+    });
   }
-  if(!sankeyOK){ log('ERROR: Could not load standard d3-sankey.'); }
 
-  // 3) Circular plugin (optional)
-  const circularCandidates = [
-    './lib/d3-sankey-circular.min.js',
-    'https://cdn.jsdelivr.net/npm/d3-sankey-circular@0.39.1/build/d3-sankey-circular.min.js',
-    'https://cdn.jsdelivr.net/npm/d3-sankey-circular@0.39.1/build/d3-sankey-circular.js',
-    'https://unpkg.com/d3-sankey-circular@0.39.1/build/d3-sankey-circular.min.js',
-    'https://unpkg.com/d3-sankey-circular@0.39.1/build/d3-sankey-circular.js'
-  ];
-  for(const u of circularCandidates){
-    try{ await loadScript(u); log('Loaded circular: '+u); break; }
-    catch{ log('Failed: '+u); }
+  async function ensureLibs(){
+    log('ensureLibs: start');
+
+    // 1) D3 core
+    try {
+      // prefer local if present (index.html); CDN only on index-cdn.html works too
+      await loadScript('./lib/d3.v7.min.js', 'd3 (local)', 15000)
+        .catch(() => loadScript('https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js', 'd3 (cdn)', 15000));
+    } catch(e) {
+      log('FATAL: d3 failed: ' + (e.message||e));
+      throw e;
+    }
+
+    // 2) Standard sankey (fallback base)
+    const sankeyTry = [
+      ['./lib/d3-sankey.min.js', 'sankey (local)'],
+      ['https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js', 'sankey (jsdelivr)'],
+      ['https://unpkg.com/d3-sankey@0.12.3/dist/d3-sankey.min.js', 'sankey (unpkg)'],
+    ];
+    let sankeyOK = false;
+    for (const [src, lbl] of sankeyTry) {
+      try { await loadScript(src, lbl, 15000); sankeyOK = true; break; } catch {}
+    }
+    if (!sankeyOK) log('WARN: standard d3-sankey missing; we can still draw a placeholder.');
+
+    // 3) Circular plugin (optional)
+    const circTry = [
+      ['./lib/d3-sankey-circular.min.js', 'circular (local)'],
+      ['https://cdn.jsdelivr.net/npm/d3-sankey-circular@0.39.1/build/d3-sankey-circular.min.js', 'circular (jsdelivr:min)'],
+      ['https://cdn.jsdelivr.net/npm/d3-sankey-circular@0.39.1/build/d3-sankey-circular.js', 'circular (jsdelivr)'],
+      ['https://unpkg.com/d3-sankey-circular@0.39.1/build/d3-sankey-circular.min.js', 'circular (unpkg:min)'],
+      ['https://unpkg.com/d3-sankey-circular@0.39.1/build/d3-sankey-circular.js', 'circular (unpkg)'],
+    ];
+    for (const [src, lbl] of circTry) {
+      try { await loadScript(src, lbl, 15000); break; } catch {}
+    }
+
+    log('ensureLibs: done');
   }
-}
+
+  // expose
+  window.__AFH__ = { ensureLibs };
+})();
 </script>
 
 <script>
-/* ---- App code (identical to index.html) ---- */
-(function(){
+/* ===== Boot and always render something ===== */
+(async function boot(){
+  const debug = document.getElementById('debug');
   const details = document.getElementById('details');
-  const debug   = document.getElementById('debug');
-  const chartEl = document.getElementById('chart');
-  const tooltip = document.getElementById('tooltip');
-  const log = m => debug.textContent += '\n'+m;
+  const log = (m)=> debug.textContent += '\n' + m;
 
-  const TRAUMA_COLORS = { low:'#4CAF50', moderate:'#FFD700', high:'#FF4C4C' };
-
-  const nodesBase = [
-    { name:'Street / Encampment', color:'#9aa3b2', harm:'moderate' },
-    { name:'Police & Jail',       color:'#FF4C4C', harm:'high', cost:'$60–$85/day', outcome:'Short-term incapacitation; record; lost stability' },
-    { name:'Courts',              color:'#ff9999', harm:'moderate', cost:'Varies by case & fees', outcome:'Fines, warrants; returns to street' },
-    { name:'ER',                  color:'#FFD700', harm:'moderate', cost:'$30–$150 Medicaid; $2.4–$2.6k uninsured', outcome:'Crisis-only care; no prevention' },
-    { name:'Shelter',             color:'#FFD700', harm:'moderate', cost:'(placeholder) $133/day', outcome:'Temporary relief; barriers; re-traumatization' },
-    { name:'Foster Care',         color:'#ff9999', harm:'high', cost:'$9.5–$27.7k per child/yr', outcome:'Family separation; long-term harm' },
-    { name:'Housing First',       color:'#4CAF50', harm:'low', cost:'RRH ~$8.5k/yr; PSH ~$16.5–$20.1k', outcome:'Stability; reduced system use' },
-    { name:'Return to Street',    color:'#9aa3b2', harm:'moderate' },
-    { name:'Ongoing Instability', color:'#FFCC00', harm:'moderate' },
-    { name:'Death',               color:'#111', harm:'high' },
-    { name:'Stability',           color:'#4CAF50', harm:'low' }
-  ];
-
-  const linksCurrentBase = [
-    { s:0,t:1,v:20 },{ s:0,t:3,v:15 },{ s:0,t:4,v:25 },{ s:0,t:6,v:5 },
-    { s:1,t:2,v:12 },{ s:1,t:8,v:8 },
-    { s:3,t:8,v:12 },
-    { s:4,t:8,v:20 },{ s:4,t:6,v:5 },
-    { s:5,t:8,v:5 },
-    { s:6,t:10,v:10 },
-    { s:8,t:0,v:10 },
-    { s:8,t:9,v:2 }
-  ];
-
-  const linksHFBase = [
-    { s:0,t:6,v:30 },{ s:0,t:4,v:10 },{ s:0,t:3,v:8 },{ s:0,t:1,v:5 },
-    { s:6,t:10,v:35 },{ s:4,t:6,v:6 },{ s:3,t:6,v:5 },{ s:1,t:6,v:3 },
-    { s:8,t:6,v:8 }
-  ];
-
-  const state = { view:'current', harm:true, faith:false, test:false };
-
-  function size(){ const r=chartEl.getBoundingClientRect(); return { w:Math.max(600,r.width||chartEl.clientWidth||600), h:Math.max(560,r.height||chartEl.clientHeight||560) }; }
-  function colorFor(n){ return state.harm ? (TRAUMA_COLORS[n.harm]||n.color||'#7ea3c9') : (n.color||'#7ea3c9'); }
-  function tip(n){ let h=`<strong>${n.name}</strong>`; if(n.cost)h+=`<br><em>Cost:</em> ${n.cost}`; if(n.outcome)h+=`<br><em>Outcomes:</em> ${n.outcome}`; return h; }
-
-function toGraph(){
-  const nodes = nodesBase.map(d=>Object.assign({}, d));
-  const base  = state.view==='current' ? linksCurrentBase : linksHFBase;
-  const links = base.map(({s,t,v}) => ({
-    source: nodes[s].name,
-    target: nodes[t].name,
-    value: v
-  }));
-  return { nodes, links };
-}
-
-// ---- prepare name-based graph + acyclic fallback
-function toAcyclic(graph){
-  // Remove just the churn edge ('Ongoing Instability' → 'Street / Encampment')
-  const LOOP_SRC = 'Ongoing Instability';
-  const LOOP_TGT = 'Street / Encampment';
-  return {
-    nodes: graph.nodes,
-    links: graph.links.filter(l => !(l.source===LOOP_SRC && l.target===LOOP_TGT))
-  };
-}
-
-// Build with circular if available; otherwise standard
-function layoutGraph(graph){
-  const useCircular = !!d3.sankeyCircular;
-  const make = useCircular ? d3.sankeyCircular : d3.sankey;
-  const sankey = make().nodeId(d=>d.name).nodeWidth(18).nodePadding(16);
-  if(sankey.extent) sankey.extent([[10,10],[w-10,h-10]]);
-  if(useCircular && sankey.circularLinkGap) sankey.circularLinkGap(4);
-  if(useCircular && sankey.circularLinkMinRadius) sankey.circularLinkMinRadius(8);
-  return { sankey, useCircular };
-}
-
-// 1) Compute layout (circular first)
-let graphOut = { nodes: graph.nodes.map(d=>({...d})), links: graph.links.map(d=>({...d})) };
-graphOut.links = graphOut.links.map(l => ({
-  source: typeof l.source==='number' ? graphOut.nodes[l.source].name : l.source,
-  target: typeof l.target==='number' ? graphOut.nodes[l.target].name : l.target,
-  value: l.value
-}));
-
-let useCircular, layout;
-try{
-  const cfg = layoutGraph(graphOut);
-  useCircular = cfg.useCircular;
-  layout = cfg.sankey(graphOut);
-}catch(e){
-  log('Circular layout failed: '+(e.message||e));
-  // 2) Fallback: standard sankey on acyclic version
-  const cfg = layoutGraph(toAcyclic(graphOut));
-  useCircular = false;
-  layout = cfg.sankey(toAcyclic(graphOut));
-}
-
-// Choose path generator
-const pathGen = (useCircular && d3.sankeyLinkCircular) ? d3.sankeyLinkCircular() : d3.sankeyLinkHorizontal();
-
-// ---- draw links
-svg.append('g').selectAll('path')
-  .data(layout.links)
-  .join('path')
-  .attr('d', pathGen)
-  .attr('fill','none')
-  .attr('stroke','rgba(200,220,255,0.35)')
-  .attr('stroke-width', d=>Math.max(1, d.width))
-  .on('mousemove', (event,d)=>{
-    const sName = layout.nodes[d.source.index].name;
-    const tName = layout.nodes[d.target.index].name;
-    tooltip.style.opacity=1;
-    tooltip.style.left=(event.pageX+12)+'px';
-    tooltip.style.top =(event.pageY+12)+'px';
-    tooltip.innerHTML = `<strong>Flow</strong><br>${sName} → ${tName}<br>People (placeholder): <strong>${d.value}</strong>`;
-  })
-  .on('mouseleave', ()=> tooltip.style.opacity=0);
-
-// ---- if NOT using circular, manually draw the churn loop as a dashed arc
-if(!useCircular){
-  const nodesByName = Object.fromEntries(layout.nodes.map(n => [n.name, n]));
-  const a = nodesByName['Ongoing Instability'];
-  const b = nodesByName['Street / Encampment'];
-  if(a && b){
-    const x1=a.x1, y1=(a.y0+a.y1)/2, x2=b.x0, y2=(b.y0+b.y1)/2;
-    const cx = Math.max(x1,x2)+80;
-    const dArc = `M ${x1} ${y1} Q ${cx} ${Math.min(y1,y2)-120} ${x2} ${y2}`;
-    svg.append('path')
-      .attr('d', dArc)
-      .attr('fill','none')
-      .attr('stroke','rgba(200,220,255,0.65)')
-      .attr('stroke-width',3)
-      .attr('stroke-dasharray','6,4')
-      .append('title').text('Churn: Ongoing Instability → Street');
-  }
-}
-
-    const g = svg.append('g').selectAll('g').data(layout.nodes).join('g');
-    g.append('rect')
-      .attr('x',d=>d.x0).attr('y',d=>d.y0)
-      .attr('height',d=>Math.max(1,d.y1-d.y0)).attr('width',d=>Math.max(1,d.x1-d.x0))
-      .attr('rx',6).attr('fill',d=>colorFor(d)).attr('stroke','#0b0c10')
-      .on('mousemove',(e,d)=>{ const tt=document.getElementById('tooltip'); tt.style.opacity=1; tt.style.left=(e.pageX+12)+'px'; tt.style.top=(e.pageY+12)+'px'; tt.innerHTML=tip(d); })
-      .on('mouseleave', ()=> document.getElementById('tooltip').style.opacity=0)
-      .on('click',(_,d)=>{ details.innerHTML = tip(d); });
-
-    const mid=w/2;
-    g.append('text')
-      .attr('x', d=> d.x0<mid ? d.x1+6 : d.x0-6 )
-      .attr('y', d=> (d.y0+d.y1)/2 )
-      .attr('dy', '0.35em')
-      .attr('text-anchor', d=> d.x0<mid ? 'start' : 'end')
-      .attr('fill','#e7edf5').style('font-size','12px')
-      .text(d=>d.name);
+  try {
+    await window.__AFH__.ensureLibs();
+  } catch (e) {
+    log('ensureLibs threw: ' + (e.message||e));
   }
 
-  function render(){
-    if(!(window.d3 && (d3.sankeyCircular || d3.sankey))){
-      details.textContent='Waiting for libraries…'; return;
+  try {
+    if (typeof render === 'function') {
+      render();
+      return;
     }
-    if(state.test){
-      draw({nodes:[{name:'A',harm:'low',color:'#4CAF50'},{name:'B',harm:'high',color:'#FF4C4C'}],links:[{source:0,target:1,value:5},{source:1,target:0,value:2}]});
-      details.textContent='Health check rendered (with a loop).'; return;
-    }
-    draw(toGraph()); details.textContent='Tip: Click a node to pin details here.';
+    log('No render() defined?');
+  } catch (e) {
+    log('render() error: ' + (e.message||e));
   }
 
-  const setP=(id,v)=>document.getElementById(id).setAttribute('aria-pressed',String(v));
-  document.getElementById('btn-current').onclick=()=>{state.view='current';setP('btn-current',true);setP('btn-hf',false);state.test=false;render();};
-  document.getElementById('btn-hf').onclick     =()=>{state.view='hf';setP('btn-hf',true);setP('btn-current',false);state.test=false;render();};
-  document.getElementById('btn-harm').onclick   =()=>{state.harm=!state.harm;setP('btn-harm',state.harm);render();};
-  document.getElementById('btn-faith').onclick  =()=>{state.faith=!state.faith;setP('btn-faith',state.faith);render();};
-  document.getElementById('btn-health').onclick =()=>{state.test=true;render();};
-  document.getElementById('btn-reset').onclick  =()=>{state.test=false;render();};
-
-  const ro=new ResizeObserver(()=>render()); ro.observe(chartEl);
-
-  (async function boot(){ await ensureLibs(); render(); })();
+  try {
+    const el = document.getElementById('chart');
+    el.innerHTML = '';
+    const w = Math.max(300, el.clientWidth || 600), h = 200;
+    const svg = d3.select('#chart').append('svg').attr('width', w).attr('height', h);
+    svg.append('text').attr('x',12).attr('y',24).attr('fill','#ccc').text('Libraries loaded; waiting to draw Sankey…');
+    details.textContent = 'Fallback placeholder drawn (no Sankey). See Debug for loader status.';
+  } catch (e) {
+    log('Fallback draw failed: ' + (e.message||e));
+  }
 })();
 </script>
 </body>
