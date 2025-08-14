@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>The Business of Homelessness — Indiana (Circular)</title>
+<title>The Business of Homelessness — Indiana (Circular, Local‑First)</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
 <style>
   :root{ --bg:#111; --fg:#eee; --muted:#9aa3b2; --green:#4CAF50; --yellow:#FFD700; --red:#FF4C4C; }
   html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
@@ -16,7 +17,8 @@
   .row{display:grid;grid-template-columns:1fr;gap:16px;padding:0 20px 20px}
   @media(min-width:900px){.row{grid-template-columns:2.2fr 1fr}}
   .card{background:#161616;border:1px solid #2a2a2a;border-radius:16px;padding:12px}
-  #chart{width:100%;height:560px;min-height:360px}
+  #chart{width:100%;height:560px;min-height:360px;display:flex;align-items:center;justify-content:center;position:relative}
+  #placeholder{color:#cbd5e1;font-size:14px;opacity:.9}
   #tooltip{position:fixed;pointer-events:none;background:#0f1218;border:1px solid #2a2f3a;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.35;max-width:320px;color:#e7edf5;z-index:3;opacity:0}
   #debug{background:#222;color:#0f0;font-family:ui-monospace,Monaco,Consolas,monospace;white-space:pre-wrap;padding:10px;border-radius:12px}
   .legend{display:flex;gap:14px;align-items:center;margin-top:8px;color:#cbd5e1;font-size:13px}
@@ -39,7 +41,9 @@
 
 <div class="row">
   <div class="card">
-    <div id="chart" aria-label="Sankey diagram"></div>
+    <div id="chart" aria-label="Sankey diagram">
+      <div id="placeholder">Loading Sankey Diagram…</div>
+    </div>
     <div class="legend">
       <span><span class="sw" style="background:#FF4C4C"></span>High trauma</span>
       <span><span class="sw" style="background:#FFD700"></span>Moderate trauma</span>
@@ -57,28 +61,22 @@
 
 <div id="tooltip"></div>
 
+<!-- ========= Robust loader (local-first with CDN fallback) ========= -->
 <script>
-/* ===== Robust loader + global error capture ===== */
 (function(){
   const dbg = () => document.getElementById('debug');
   const log = (m) => { const el = dbg(); if (el) el.textContent += '\n' + m; };
 
-  // Show ANY runtime errors
+  // Show ANY runtime errors in the debug pane
   window.addEventListener('error', (e) => log('window.error: ' + (e.message || e)));
   window.addEventListener('unhandledrejection', (e) => log('unhandledrejection: ' + (e.reason && e.reason.message || e.reason)));
 
   function loadScript(src, label, ms=15000){
     return new Promise((resolve, reject) => {
       let done = false;
-      const t = setTimeout(() => {
-        if (done) return;
-        done = true;
-        log('Timeout loading: ' + label + ' (' + src + ')');
-        reject(new Error('timeout ' + src));
-      }, ms);
-
+      const t = setTimeout(() => { if (done) return; done = true; log('Timeout: ' + label + ' (' + src + ')'); reject(new Error('timeout ' + src)); }, ms);
       const s = document.createElement('script');
-      s.src = src; s.async = true; s.defer = false;
+      s.src = src; s.async = true;
       s.onload = () => { if (done) return; done = true; clearTimeout(t); log('Loaded: ' + label); resolve(src); };
       s.onerror = () => { if (done) return; done = true; clearTimeout(t); log('Failed: ' + label + ' (' + src + ')'); reject(new Error('load fail ' + src)); };
       document.head.appendChild(s);
@@ -89,29 +87,26 @@
   async function ensureLibs(){
     log('ensureLibs: start');
 
-    // 1) D3 core
+    // 1) D3 core (local → CDN)
     try {
-      // prefer local if present (index.html); CDN only on index-cdn.html works too
-      await loadScript('./lib/d3.v7.min.js', 'd3 (local)', 15000)
-        .catch(() => loadScript('https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js', 'd3 (cdn)', 15000));
-    } catch(e) {
-      log('FATAL: d3 failed: ' + (e.message||e));
-      throw e;
+      await loadScript('./lib/d3.v7.min.js', 'd3 (local)');
+    } catch {
+      await loadScript('https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js', 'd3 (cdn)');
     }
 
-    // 2) Standard sankey (fallback base)
+    // 2) Standard d3-sankey (required even if circular loads)
     const sankeyTry = [
       ['./lib/d3-sankey.min.js', 'sankey (local)'],
       ['https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js', 'sankey (jsdelivr)'],
       ['https://unpkg.com/d3-sankey@0.12.3/dist/d3-sankey.min.js', 'sankey (unpkg)'],
     ];
     let sankeyOK = false;
-    for (const [src, lbl] of sankeyTry) {
-      try { await loadScript(src, lbl, 15000); sankeyOK = true; break; } catch {}
+    for(const [src,lbl] of sankeyTry){
+      try { await loadScript(src, lbl); sankeyOK = true; break; } catch {}
     }
-    if (!sankeyOK) log('WARN: standard d3-sankey missing; we can still draw a placeholder.');
+    if(!sankeyOK) log('WARN: standard d3-sankey missing; fallback may degrade.');
 
-    // 3) Circular plugin (optional)
+    // 3) Circular plugin (optional; enables true loops)
     const circTry = [
       ['./lib/d3-sankey-circular.min.js', 'circular (local)'],
       ['https://cdn.jsdelivr.net/npm/d3-sankey-circular@0.39.1/build/d3-sankey-circular.min.js', 'circular (jsdelivr:min)'],
@@ -119,52 +114,215 @@
       ['https://unpkg.com/d3-sankey-circular@0.39.1/build/d3-sankey-circular.min.js', 'circular (unpkg:min)'],
       ['https://unpkg.com/d3-sankey-circular@0.39.1/build/d3-sankey-circular.js', 'circular (unpkg)'],
     ];
-    for (const [src, lbl] of circTry) {
-      try { await loadScript(src, lbl, 15000); break; } catch {}
+    for(const [src,lbl] of circTry){
+      try { await loadScript(src, lbl); break; } catch {}
     }
 
     log('ensureLibs: done');
   }
 
-  // expose
   window.__AFH__ = { ensureLibs };
 })();
 </script>
 
+<!-- ========= App code (global render/draw; local-first) ========= -->
 <script>
-/* ===== Boot and always render something ===== */
-(async function boot(){
-  const debug = document.getElementById('debug');
-  const details = document.getElementById('details');
-  const log = (m)=> debug.textContent += '\n' + m;
+/* State & UI refs */
+const details = document.getElementById('details');
+const debug   = document.getElementById('debug');
+const chartEl = document.getElementById('chart');
+const tooltip = document.getElementById('tooltip');
+const placeholder = document.getElementById('placeholder');
+const log = (m)=> debug.textContent += '\n' + m;
 
+const TRAUMA_COLORS = { low:'#4CAF50', moderate:'#FFD700', high:'#FF4C4C' };
+
+/* Data (placeholders) */
+const nodesBase = [
+  { name:'Street / Encampment', color:'#9aa3b2', harm:'moderate' },
+  { name:'Police & Jail',       color:'#FF4C4C', harm:'high', cost:'$60–$85/day (Indiana jails est.)', outcome:'Short-term incapacitation; record; lost stability', faith:'“Blessed are the merciful…” (Mt 5:7)' },
+  { name:'Courts',              color:'#ff9999', harm:'moderate', cost:'Varies by case & fees', outcome:'Fines, warrants; returns to street' },
+  { name:'ER',                  color:'#FFD700', harm:'moderate', cost:'$30–$150 (Medicaid); $2.4–$2.6k uninsured avg', outcome:'Crisis-only care; no prevention' },
+  { name:'Shelter',             color:'#FFD700', harm:'moderate', cost:'(placeholder) $133/day lodging benchmark', outcome:'Temporary relief; barriers; re-traumatization' },
+  { name:'Foster Care',         color:'#ff9999', harm:'high', cost:'$9.5–$27.7k per child/yr', outcome:'Family separation; long-term harm' },
+  { name:'Housing First',       color:'#4CAF50', harm:'low', cost:'RRH ~$8.5k/yr; PSH ~$16.5–$20.1k', outcome:'Stability; reduced system use' },
+  { name:'Return to Street',    color:'#9aa3b2', harm:'moderate' },
+  { name:'Ongoing Instability', color:'#FFCC00', harm:'moderate' },
+  { name:'Death',               color:'#111', harm:'high' },
+  { name:'Stability',           color:'#4CAF50', harm:'low' }
+];
+
+const linksCurrentBase = [
+  { s:0,t:1,v:20 },{ s:0,t:3,v:15 },{ s:0,t:4,v:25 },{ s:0,t:6,v:5 },
+  { s:1,t:2,v:12 },{ s:1,t:8,v:8 },
+  { s:3,t:8,v:12 },
+  { s:4,t:8,v:20 },{ s:4,t:6,v:5 },
+  { s:5,t:8,v:5 },
+  { s:6,t:10,v:10 },
+  { s:8,t:0,v:10 },  // CHURN back to Street (loop)
+  { s:8,t:9,v:2 }
+];
+
+const linksHFBase = [
+  { s:0,t:6,v:30 },{ s:0,t:4,v:10 },{ s:0,t:3,v:8 },{ s:0,t:1,v:5 },
+  { s:6,t:10,v:35 },{ s:4,t:6,v:6 },{ s:3,t:6,v:5 },{ s:1,t:6,v:3 },
+  { s:8,t:6,v:8 }
+];
+
+/* App state */
+const state = { view:'current', harm:true, faith:false, test:false };
+
+/* Helpers */
+function size(){ const r=chartEl.getBoundingClientRect(); return { w:Math.max(600,r.width||chartEl.clientWidth||600), h:Math.max(560,r.height||chartEl.clientHeight||560) }; }
+function colorFor(n){ return state.harm ? (TRAUMA_COLORS[n.harm]||n.color||'#7ea3c9') : (n.color||'#7ea3c9'); }
+function tip(n){
+  let h = `<strong>${n.name}</strong>`;
+  if(n.cost)     h += `<br><em>Cost:</em> ${n.cost}`;
+  if(n.outcome)  h += `<br><em>Outcomes:</em> ${n.outcome}`;
+  if(state.faith && n.faith) h += `<br><em>Faith Lens:</em> ${n.faith}`;
+  return h;
+}
+function toGraph(){
+  const nodes = nodesBase.map(d=>Object.assign({}, d));
+  const base  = state.view==='current' ? linksCurrentBase : linksHFBase;
+  const links = base.map(({s,t,v}) => ({ source: nodes[s].name, target: nodes[t].name, value: v }));
+  return { nodes, links };
+}
+function toAcyclic(graph){
+  const LOOP_SRC = 'Ongoing Instability';
+  const LOOP_TGT = 'Street / Encampment';
+  return { nodes: graph.nodes, links: graph.links.filter(l => !(l.source===LOOP_SRC && l.target===LOOP_TGT)) };
+}
+
+/* ===== Global draw/render so future embeds can call them ===== */
+window.draw = function draw(graph){
+  // clear placeholder
+  if (placeholder) placeholder.remove();
+
+  chartEl.innerHTML = '';
+  const { w,h } = size();
+  log(`draw w:${w} h:${h} view:${state.view} test:${state.test}`);
+
+  const svg = d3.select('#chart').append('svg').attr('width', w).attr('height', h);
+
+  // Build layout (prefer circular; fallback to standard & dashed arc)
+  const useCircularAvail = !!d3.sankeyCircular;
+  const make = useCircularAvail ? d3.sankeyCircular : d3.sankey;
+  const sankey0 = make().nodeId(d=>d.name).nodeWidth(18).nodePadding(16);
+  if (sankey0.extent) sankey0.extent([[10,10],[w-10,h-10]]);
+  if (useCircularAvail && sankey0.circularLinkGap) sankey0.circularLinkGap(4);
+  if (useCircularAvail && sankey0.circularLinkMinRadius) sankey0.circularLinkMinRadius(8);
+
+  let layout, useCircular = useCircularAvail, graphOut = graph;
+  try{
+    layout = sankey0(graphOut);
+  }catch(e){
+    log('Circular layout failed: '+(e.message||e));
+    useCircular = false;
+    const sankey1 = d3.sankey().nodeId(d=>d.name).nodeWidth(18).nodePadding(16).extent([[10,10],[w-10,h-10]]);
+    layout = sankey1(toAcyclic(graphOut));
+  }
+
+  const pathGen = (useCircular && d3.sankeyLinkCircular) ? d3.sankeyLinkCircular() : d3.sankeyLinkHorizontal();
+
+  // Links
+  svg.append('g').selectAll('path')
+    .data(layout.links)
+    .join('path')
+    .attr('d', pathGen)
+    .attr('fill','none')
+    .attr('stroke','rgba(200,220,255,0.35)')
+    .attr('stroke-width', d=>Math.max(1, d.width))
+    .on('mousemove', (e,d)=>{
+      const sName = layout.nodes[d.source.index].name, tName = layout.nodes[d.target.index].name;
+      tooltip.style.opacity=1; tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px';
+      tooltip.innerHTML = `<strong>Flow</strong><br>${sName} → ${tName}<br>People (placeholder): <strong>${d.value}</strong>`;
+    })
+    .on('mouseleave', ()=> tooltip.style.opacity=0);
+
+  // If circular not used, draw dashed churn arc manually so story still lands
+  if(!useCircular){
+    const byName = Object.fromEntries(layout.nodes.map(n => [n.name, n]));
+    const a = byName['Ongoing Instability'], b = byName['Street / Encampment'];
+    if(a && b){
+      const x1=a.x1, y1=(a.y0+a.y1)/2, x2=b.x0, y2=(b.y0+b.y1)/2;
+      const cx = Math.max(x1,x2)+80;
+      svg.append('path')
+        .attr('d', `M ${x1} ${y1} Q ${cx} ${Math.min(y1,y2)-120} ${x2} ${y2}`)
+        .attr('fill','none').attr('stroke','rgba(200,220,255,0.65)')
+        .attr('stroke-width',3).attr('stroke-dasharray','6,4')
+        .append('title').text('Churn: Ongoing Instability → Street');
+    }
+  }
+
+  // Nodes
+  const g = svg.append('g').selectAll('g').data(layout.nodes).join('g');
+  g.append('rect')
+    .attr('x',d=>d.x0).attr('y',d=>d.y0)
+    .attr('height',d=>Math.max(1,d.y1-d.y0)).attr('width',d=>Math.max(1,d.x1-d.x0))
+    .attr('rx',6).attr('fill',d=>colorFor(d)).attr('stroke','#0b0c10')
+    .on('mousemove',(e,d)=>{ tooltip.style.opacity=1; tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px'; tooltip.innerHTML=tip(d); })
+    .on('mouseleave', ()=> tooltip.style.opacity=0)
+    .on('click',(_,d)=>{ details.innerHTML = tip(d); });
+
+  const mid=w/2;
+  g.append('text')
+    .attr('x', d=> d.x0<mid ? d.x1+6 : d.x0-6 )
+    .attr('y', d=> (d.y0+d.y1)/2 )
+    .attr('dy', '0.35em')
+    .attr('text-anchor', d=> d.x0<mid ? 'start' : 'end')
+    .attr('fill','#e7edf5').style('font-size','12px')
+    .text(d=>d.name);
+};
+
+window.render = function render(){
+  if(!(window.d3 && (d3.sankey || d3.sankeyCircular))){
+    details.textContent = 'Waiting for libraries…'; return;
+  }
+  const graph = state.test
+    ? { nodes:[{name:'A',harm:'low',color:'#4CAF50'},{name:'B',harm:'high',color:'#FF4C4C'}],
+        links:[{source:'A',target:'B',value:5},{source:'B',target:'A',value:2}] }
+    : toGraph();
+
+  window.draw(graph);
+  details.textContent = state.test
+    ? 'Health check rendered (with a loop).'
+    : 'Tip: Click a node to pin details here.';
+};
+
+/* Buttons */
+const setP=(id,v)=>document.getElementById(id).setAttribute('aria-pressed',String(v));
+document.getElementById('btn-current').onclick=()=>{state.view='current';setP('btn-current',true);setP('btn-hf',false);state.test=false;window.render();};
+document.getElementById('btn-hf').onclick     =()=>{state.view='hf';setP('btn-hf',true);setP('btn-current',false);state.test=false;window.render();};
+document.getElementById('btn-harm').onclick   =()=>{state.harm=!state.harm;setP('btn-harm',state.harm);window.render();};
+document.getElementById('btn-faith').onclick  =()=>{state.faith=!state.faith;setP('btn-faith',state.faith);window.render();};
+document.getElementById('btn-health').onclick =()=>{state.test=true;window.render();};
+document.getElementById('btn-reset').onclick  =()=>{state.test=false;window.render();};
+
+/* Resize → re-render */
+const ro = new ResizeObserver(()=> window.render());
+ro.observe(chartEl);
+</script>
+
+<!-- ========= Boot: load libs, then render (always) ========= -->
+<script>
+(async function boot(){
   try {
     await window.__AFH__.ensureLibs();
   } catch (e) {
-    log('ensureLibs threw: ' + (e.message||e));
+    debug.textContent += '\nensureLibs threw: ' + (e.message||e);
   }
-
   try {
-    // your existing render() call; if it throws, we show a tiny placeholder
-    if (typeof render === 'function') {
-      render();
-      return;
-    }
-    log('No render() defined?');
+    window.render();
   } catch (e) {
-    log('render() error: ' + (e.message||e));
-  }
-
-  // Minimal placeholder (d3 only) so page isn’t blank
-  try {
-    const el = document.getElementById('chart');
-    el.innerHTML = '';
-    const w = Math.max(300, el.clientWidth || 600), h = 200;
-    const svg = d3.select('#chart').append('svg').attr('width', w).attr('height', h);
-    svg.append('text').attr('x',12).attr('y',24).attr('fill','#ccc').text('Libraries loaded; waiting to draw Sankey…');
-    details.textContent = 'Fallback placeholder drawn (no Sankey). See Debug for loader status.';
-  } catch (e) {
-    log('Fallback draw failed: ' + (e.message||e));
+    debug.textContent += '\nrender() error: ' + (e.message||e);
+    // Draw a minimal placeholder so it’s never blank
+    try{
+      const w = Math.max(300, chartEl.clientWidth || 600), h = 200;
+      const svg = d3.select('#chart').append('svg').attr('width', w).attr('height', h);
+      svg.append('text').attr('x',12).attr('y',24).attr('fill','#ccc').text('Libraries loaded; waiting to draw Sankey…');
+      details.textContent = 'Fallback placeholder drawn (no Sankey). See Debug for loader status.';
+    }catch(err){ debug.textContent += '\nFallback failed: ' + (err.message||err); }
   }
 })();
 </script>
